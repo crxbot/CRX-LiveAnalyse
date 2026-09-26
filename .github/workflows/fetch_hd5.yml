@@ -156,7 +156,7 @@ jobs:
       - name: Upload neue WEBP zu R2
         run: |
           aws s3 cp \
-            "output/rv/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}.webp" \
+            "output/hymecng/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}.webp" \
             "s3://${{ secrets.R2_BUCKET }}/${R2_PREFIX}/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}.webp" \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
         env:
