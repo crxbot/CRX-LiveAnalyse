@@ -1,0 +1,57 @@
+name: Cleanup Old Workflow Runs
+
+on:
+  workflow_run:
+    workflows: ["Fetch LiveAnalyse Files and Generate Webp"] # oder "*" für alle Workflows
+    types:
+      - completed  # Löst aus, sobald ein Run fertig ist
+permissions: 
+  actions: write
+
+jobs:
+  cleanup_old_runs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete all old workflow runs
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // ID des gerade abgeschlossenen Runs
+            const currentRunId = context.payload.workflow_run.id;
+
+            // Hole alle Workflow Runs für dieses Workflow
+            let page = 1;
+            let hasMore = true;
+
+            while (hasMore) {
+              const runsResponse = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: context.payload.workflow_run.workflow_id,
+                status: 'completed',
+                per_page: 100,
+                page
+              });
+
+              const runs = runsResponse.data.workflow_runs;
+              if (runs.length === 0) break;
+
+              for (const run of runs) {
+                if (run.id !== currentRunId) {
+                  console.log(`Lösche Run ${run.id} (${run.created_at})`);
+                  try {
+                    await github.rest.actions.deleteWorkflowRun({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      run_id: run.id
+                    });
+                  } catch (err) {
+                    console.log(`Fehler beim Löschen von Run ${run.id}: ${err.message}`);
+                  }
+                }
+              }
+
+              page++;
+              hasMore = runs.length === 100;
+            }

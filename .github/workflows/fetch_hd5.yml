@@ -1,0 +1,191 @@
+name: Fetch LiveAnalyse Files and Generate Webp
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  # verhindert, dass zwei Laeufe gleichzeitig dieselbe Datei generieren/hochladen
+  group: fetch-rv
+  cancel-in-progress: false
+
+env:
+  # so viele WEBPs sollen im R2-Bucket max. gleichzeitig liegen
+  MAX_KEEP: 48
+  R2_PREFIX: liveanalyse
+
+jobs:
+  fetch_generate_deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # Sicherheitsnetz, falls die Datei nie erscheint
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.LIVE_PAT }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Cache Python packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set RUN and DATE (rounded to 5 min, UTC)
+        id: set_run_date
+        run: |
+          NOW=$(date -u +%s)
+          SLOT_EPOCH=$(( NOW / 300 * 300 ))
+
+          TIME=$(date -u -d "@$SLOT_EPOCH" +%H%M)
+          DATE=$(date -u -d "@$SLOT_EPOCH" +%Y%m%d)
+          BERLIN_TIME=$(TZ=Europe/Berlin date -d "@$SLOT_EPOCH" +%H%M)
+          BERLIN_DATE=$(TZ=Europe/Berlin date -d "@$SLOT_EPOCH" +%Y%m%d)
+
+          echo "TIME=$TIME" >> $GITHUB_ENV
+          echo "DATE=$DATE" >> $GITHUB_ENV
+          echo "SLOT_EPOCH=$SLOT_EPOCH" >> $GITHUB_ENV
+          echo "BERLIN_TIME=$BERLIN_TIME" >> $GITHUB_ENV
+          echo "BERLIN_DATE=$BERLIN_DATE" >> $GITHUB_ENV
+          echo "run=${DATE}_${TIME}" >> $GITHUB_OUTPUT
+
+          echo "UTC-Slot: ${DATE}_${TIME} | Berlin: ${BERLIN_DATE}_${BERLIN_TIME}"
+
+      - name: Download RV und HymecNG parallel (mit Retry)
+        run: |
+          MAX_ATTEMPTS=50
+          SLEEP_SECONDS=5
+
+          download_rv() {
+            OUT_DIR="data/rv"
+            mkdir -p "$OUT_DIR"
+            TAR_NAME="composite_rv_${DATE}_${TIME}.tar"
+            MEMBER="composite_rv_${DATE}_${TIME}_000-hd5"
+            URL="https://opendata.dwd.de/weather/radar/composite/rv/${TAR_NAME}"
+            TMP_TAR="${RUNNER_TEMP}/${TAR_NAME}"
+            OUT="${OUT_DIR}/${MEMBER}"
+            for i in $(seq 1 "$MAX_ATTEMPTS"); do
+              HTTP_CODE=$(curl -s -o "$TMP_TAR" -w "%{http_code}" \
+                --connect-timeout 10 --max-time 120 "$URL" || echo "000")
+              if [ "$HTTP_CODE" = "200" ] && [ -s "$TMP_TAR" ]; then
+                if tar -xf "$TMP_TAR" -C "$OUT_DIR" --wildcards "*${MEMBER}" \
+                    --transform 's|.*/||' && [ -s "$OUT" ]; then
+                  echo "[RV] Erfolgreich (Versuch $i/$MAX_ATTEMPTS): $OUT"
+                  rm -f "$TMP_TAR"
+                  return 0
+                fi
+                echo "[RV] Versuch $i/$MAX_ATTEMPTS: tar geladen, aber ${MEMBER} nicht extrahierbar."
+              else
+                echo "[RV] Versuch $i/$MAX_ATTEMPTS: tar noch nicht verfuegbar (HTTP $HTTP_CODE)."
+              fi
+              rm -f "$TMP_TAR" "$OUT"
+              sleep "$SLEEP_SECONDS"
+            done
+            echo "::error::[RV] ${TAR_NAME} nach $MAX_ATTEMPTS Versuchen nicht verfuegbar - Abbruch."
+            return 1
+          }
+
+          download_hymecng() {
+            OUT_DIR="data/hymecng"
+            mkdir -p "$OUT_DIR"
+            FILE_NAME="composite_HymecNG_${DATE}_${TIME}_000-hd5"
+            URL="https://opendata.dwd.de/weather/radar/composite/hymecng/${FILE_NAME}"
+            OUT="${OUT_DIR}/${FILE_NAME}"
+            TMP_FILE="${RUNNER_TEMP}/${FILE_NAME}"
+            for i in $(seq 1 "$MAX_ATTEMPTS"); do
+              HTTP_CODE=$(curl -s -o "$TMP_FILE" -w "%{http_code}" \
+                --connect-timeout 10 --max-time 120 "$URL" || echo "000")
+              if [ "$HTTP_CODE" = "200" ] && [ -s "$TMP_FILE" ]; then
+                mv "$TMP_FILE" "$OUT"
+                echo "[HymecNG] Erfolgreich (Versuch $i/$MAX_ATTEMPTS): $OUT"
+                return 0
+              fi
+              echo "[HymecNG] Versuch $i/$MAX_ATTEMPTS: Datei noch nicht verfuegbar (HTTP $HTTP_CODE)."
+              rm -f "$TMP_FILE"
+              sleep "$SLEEP_SECONDS"
+            done
+            echo "::error::[HymecNG] ${FILE_NAME} nach $MAX_ATTEMPTS Versuchen nicht verfuegbar - Abbruch."
+            return 1
+          }
+
+          download_rv &
+          PID_RV=$!
+          download_hymecng &
+          PID_HYMECNG=$!
+
+          STATUS=0
+          wait "$PID_RV" || STATUS=1
+          wait "$PID_HYMECNG" || STATUS=1
+
+          exit $STATUS
+
+
+      - name: Generate WEBP for LiveAnalyse
+        run: python scripts/generate_webp.py
+
+      - name: Download bestehende metadata.json aus R2 (falls vorhanden)
+        run: |
+          aws s3 cp \
+            "s3://${{ secrets.R2_BUCKET }}/${R2_PREFIX}/metadata.json" \
+            ./metadata_prev.json \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
+            || echo "Keine bestehende metadata.json in R2 gefunden - starte frisch."
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Build metadata.json (mit bestehendem Stand mergen, auf ${{ env.MAX_KEEP }} Timesteps kuerzen)
+        run: |
+          python scripts/generate_metadata.py output \
+            --run "${{ steps.set_run_date.outputs.run }}" \
+            --date "$BERLIN_DATE" \
+            --existing ./metadata_prev.json \
+            --max-keep "$MAX_KEEP" \
+            --meta-out ./metadata.json \
+            --removed-out ./removed_files.txt
+
+      - name: Upload neue WEBP zu R2
+        run: |
+          aws s3 cp \
+            "output/rv/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}.webp" \
+            "s3://${{ secrets.R2_BUCKET }}/${R2_PREFIX}/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}.webp" \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Upload aktualisierte metadata.json zu R2
+        run: |
+          aws s3 cp \
+            ./metadata.json \
+            "s3://${{ secrets.R2_BUCKET }}/${R2_PREFIX}/metadata.json" \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Aus dem Fenster gefallene alte WEBPs aus R2 loeschen
+        run: |
+          if [ -s ./removed_files.txt ]; then
+            while IFS= read -r fname || [ -n "$fname" ]; do
+              [ -z "$fname" ] && continue
+              echo "Loesche $fname aus R2 ..."
+              aws s3 rm \
+                "s3://${{ secrets.R2_BUCKET }}/${R2_PREFIX}/$fname" \
+                --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+            done < ./removed_files.txt
+          else
+            echo "Nichts zu loeschen - Fenster noch nicht voll oder unveraendert."
+          fi
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
