@@ -84,7 +84,7 @@ MIXED_TYPE_CODES = {8}  # Schneeregen/Graupel
 SLEET_TYPE_CODES = {4, 5, 6}  # Gefrierender Regen
 HAIL_TYPE_CODES = {9, 10}
 
-MIN_PRECIP_RATE_MMH = 0.1  # unter dieser Schwelle: kein Niederschlag erkannt
+MIN_PRECIP_RATE_MMH = 0.09  # unter dieser Schwelle: kein Niederschlag erkannt
 
 # Blitze
 THUNDER_COLOR = "#FD5FFF"
