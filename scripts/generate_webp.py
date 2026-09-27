@@ -781,7 +781,7 @@ def load_rv_rate_on_target_grid(rv_path: Path, x_new: np.ndarray, y_new: np.ndar
     )
 
     to_proj_rv = Transformer.from_crs("EPSG:4326", grid["projdef"], always_xy=True)
-    rate_merc = bilinear_warp(rate, grid, to_proj_rv, x_new, y_new, fill_value=np.nan)
+    rate_merc = nearest_neighbor_warp(rate, grid, to_proj_rv, x_new, y_new, fill_value=np.nan)
     return rate_merc, grid
 
 
