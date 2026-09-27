@@ -409,7 +409,7 @@ def nearest_neighbor_warp(
 
     ll_x, ll_y = to_proj.transform(grid["ll_lon"], grid["ll_lat"])
 
-    col = np.round((x_nat - ll_x) / grid["xscale"]).astype(np.int64)
+    col = np.floor((x_nat - ll_x) / grid["xscale"]).astype(np.int64)
     row = np.round(grid["ysize"] - 1 - (y_nat - ll_y) / grid["yscale"]).astype(np.int64)
     valid = (col >= 0) & (col < grid["xsize"]) & (row >= 0) & (row < grid["ysize"])
 
