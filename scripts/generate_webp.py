@@ -54,7 +54,7 @@ HAIL_CLASSES = {9, 10}
 #   maessig 2,5 - 10,0 mm/h
 #   stark   >= 10,0 mm/h
 RAIN_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
-    (0.1, 1.25, 31),           # leicht
+    (0.09, 1.25, 31),           # leicht
     (1.25, 10.0, 32),           # maessig
     (10.0, float("inf"), 33),  # stark
 ]
@@ -63,7 +63,7 @@ RAIN_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
 # dokumentierte DWD-Lexikon-Stufung wie fuer Regen. Platzhalter, unbedingt
 # gegen eigene Beobachtungen/Warnschwellen pruefen, bevor produktiv genutzt!
 SNOW_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
-    (0.1, 1.4, 71),           # leicht
+    (0.09, 1.4, 71),           # leicht
     (1.4, 4.0, 72),            # maessig
     (4.0, float("inf"), 73),   # stark
 ]
