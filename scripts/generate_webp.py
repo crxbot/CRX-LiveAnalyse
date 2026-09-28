@@ -4,7 +4,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from scipy.signal import fftconvolve
 from scipy import ndimage
 from scipy.ndimage import map_coordinates
 
@@ -115,10 +114,6 @@ RV_DEFAULT_UNDETECT = 0.0
 # Ist die Quantity im File stattdessen "RATE", wird nicht umgerechnet.
 RV_STEP_MINUTES = 5.0
 
-# Code 1 Nearest-Fill
-FILL_UNCLASSIFIABLE_CODE = 1
-FILL_RADIUS_PX = 8          # Suchradius um jeden Code-1-Pixel
-FILL_MIN_NEIGHBORS = 4      # mind. so viele Niederschlags-Pixel im Radius, sonst bleibt 1
 PRECIP_SOURCE_CODES = [2, 3, 4, 5, 6, 7, 8, 9, 10]   # nur echte Niederschlagsklassen (Basis-Codes)
 
 # RV-verfeinerte Intensitaetsstufen (entstehen erst durch refine_with_hybrid_strategy).
@@ -577,45 +572,6 @@ def refine_with_hybrid_strategy(
     return refined
 
 
-def fill_unclassifiable(class_merc: np.ndarray,
-                        code: int = FILL_UNCLASSIFIABLE_CODE,
-                        radius: int = FILL_RADIUS_PX,
-                        min_neighbors: int = FILL_MIN_NEIGHBORS) -> np.ndarray:
-    """Ersetzt verbleibende 'code'-Pixel durch den haeufigsten Niederschlagscode im Kreis um den Pixel.
-
-    Verwendet ALL_PRECIP_CODES (nicht nur PRECIP_SOURCE_CODES), da class_merc
-    an dieser Stelle bereits durch refine_with_hybrid_strategy() verfeinert
-    wurde und Regen-/Schnee-Pixel ueblicherweise als 31/32/33 bzw. 71/72/73
-    vorliegen statt als 3/7.
-    """
-    bad = class_merc == code
-    if not bad.any():
-        return class_merc
-
-    off = np.arange(-radius, radius + 1)
-    dr, dc = np.meshgrid(off, off, indexing="ij")
-    kernel = (dr * dr + dc * dc <= radius * radius).astype(np.float32)
-
-    codes = [c for c in ALL_PRECIP_CODES if (class_merc == c).any()]
-    if not codes:
-        return class_merc
-
-    counts = np.stack([
-        fftconvolve((class_merc == c).astype(np.float32), kernel, mode="same")
-        for c in codes
-    ])
-    counts = np.rint(counts)  # FFT-Rundungsrauschen entfernen
-
-    best_idx = counts.argmax(axis=0)
-    best_cnt = counts.max(axis=0)
-    best_code = np.asarray(codes)[best_idx]
-
-    fill = bad & (best_cnt >= min_neighbors)
-    out = class_merc.copy()
-    out[fill] = best_code[fill]
-    return out
-
-
 # --------------------------------------------------------------------------- #
 # Einfaerben
 # --------------------------------------------------------------------------- #
@@ -824,14 +780,10 @@ def main() -> None:
     print("Wende Hybrid-Strategie an (RV + HymecNG)...")
     class_merc = refine_with_hybrid_strategy(class_merc, rate_merc)
     
-    # === Schritt 4: Lücken füllen ===
-    print("Fülle Code-1-Pixel...")
-    class_merc = fill_unclassifiable(class_merc)
-
-    # === Schritt 5: Einfärben ===
+    # === Schritt 4: Einfärben ===
     rgba = colorize(class_merc)
 
-    # === Schritt 6: Blitze ===
+    # === Schritt 5: Blitze ===
     try:
         hits = apply_lightning_overlay(rgba, class_merc, rate_merc, ts, x_new, y_new)
         print(f"{hits} Blitz-Treffer eingefaerbt ({THUNDER_COLOR}).")
