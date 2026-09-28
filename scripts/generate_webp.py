@@ -35,8 +35,10 @@ PRECIP_COLORS: dict[int, str] = {
     32: "#34C134",  # Regen maessig
     33: "#008200",  # Regen stark
     4: "#FF4343",
-    5: "#FF4343",
-    6: "#FFA500",
+    5: "#C80000",
+    6:  "#FFC189",  # Schneeregen ohne RV (Fallback), vorher #FFA500
+    61: "#FFC189",  # Schneeregen leicht
+    62: "#FF973A",  # Schneeregen mäßig/stark
     7: "#47F0FF",
     71: "#47F0FF",
     72: "#478CFF",
@@ -47,25 +49,23 @@ PRECIP_COLORS: dict[int, str] = {
 }
 HAIL_CLASSES = {9, 10}
 
-# mm/h-Schwellen fuer Regen (Code 3 -> 31/32/33). [lower, upper, neuer_code]
-# upper ist exklusiv.
-# Offizielle DWD-Lexikon-Werte (Niederschlagsintensitaet, 60-Min-Fenster):
-#   leicht  < 2,5 mm/h
-#   maessig 2,5 - 10,0 mm/h
-#   stark   >= 10,0 mm/h
+# SCHWELLWERTE
+
 RAIN_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
-    (0.09, 1.25, 31),           # leicht
+    (0.1, 1.25, 31),           # leicht
     (1.25, 10.0, 32),           # maessig
     (10.0, float("inf"), 33),  # stark
 ]
 
-# mm/h-Schwellen fuer Schnee - fuer Schnee gibt es keine ebenso sauber
-# dokumentierte DWD-Lexikon-Stufung wie fuer Regen. Platzhalter, unbedingt
-# gegen eigene Beobachtungen/Warnschwellen pruefen, bevor produktiv genutzt!
 SNOW_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
-    (0.09, 1.4, 71),           # leicht
-    (1.4, 4.0, 72),            # maessig
+    (0.1, 1.0, 71),           # leicht
+    (1.0, 4.0, 72),            # maessig
     (4.0, float("inf"), 73),   # stark
+]
+
+SLEET_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
+    (0.1, 1.0, 61),            # leicht
+    (1.0, float("inf"), 62),   # mäßig/stark
 ]
 
 # ===== HYBRID-STRATEGIE KONFIGURATION =====
@@ -81,10 +81,11 @@ PRESERVE_PRECIP_TYPE_CODES = {
 RAIN_TYPE_CODES = {2, 3, 31, 32, 33}
 SNOW_TYPE_CODES = {7, 71, 72, 73}
 MIXED_TYPE_CODES = {8}  # Schneeregen/Graupel
-SLEET_TYPE_CODES = {4, 5, 6}  # Gefrierender Regen
+SLEET_TYPE_CODES = {6, 61, 62} 
+FREEZING_RAIN_TYPE_CODES = {4, 5}
 HAIL_TYPE_CODES = {9, 10}
 
-MIN_PRECIP_RATE_MMH = 0.09  # unter dieser Schwelle: kein Niederschlag erkannt
+MIN_PRECIP_RATE_MMH = 0.1  # unter dieser Schwelle: kein Niederschlag erkannt
 
 # Blitze
 THUNDER_COLOR = "#FD5FFF"
@@ -127,7 +128,7 @@ PRECIP_SOURCE_CODES = [2, 3, 4, 5, 6, 7, 8, 9, 10]   # nur echte Niederschlagskl
 # pruefen (Loecher fuellen, Blitz-Overlay), muessen deshalb ALL_PRECIP_CODES
 # statt PRECIP_SOURCE_CODES verwenden - sonst werden diese Pixel faelschlich
 # als "kein Niederschlag" behandelt.
-REFINED_PRECIP_CODES = [31, 32, 33, 71, 72, 73]
+REFINED_PRECIP_CODES = [31, 32, 33, 61, 62, 71, 72, 73]
 ALL_PRECIP_CODES = PRECIP_SOURCE_CODES + REFINED_PRECIP_CODES
 
 
@@ -491,35 +492,20 @@ def refine_with_hybrid_strategy(
     class_merc: np.ndarray,      # HymecNG-Klassifikation
     rate_merc: np.ndarray | None, # RV-Niederschlagsrate (mm/h)
 ) -> np.ndarray:
-    """
-    Hybrid-Verfeinerung: RV als Detektion + Intensität, HymecNG als Niederschlagsart.
     
-    Logik:
-    1. Pixel mit RV-Niederschlag (rate > MIN_PRECIP_RATE) werden als "es regnet/schneit" erkannt
-    2. Die Niederschlagsart (Regen vs. Schnee) kommt von HymecNG
-    3. Die Intensität (leicht/mittel/stark) kommt von RV -- fuer BEIDE Arten,
-       nicht nur fuer Regen (sonst bleibt Schnee immer undifferenziert Code 7)
-    4. Schneeregen/Graupel (8), gefrierender Regen (4/5/6) und Hagel (9/10)
-       bleiben unveraendert -- fuer diese gibt es keine RV-Schwellen
-    5. Reiner Regen (Code 3) wird mit RV-Intensitaet verfeinert (31/32/33)
-    6. Reiner Schnee (Code 7) wird mit RV-Intensitaet verfeinert (71/72/73)
-    7. Luecken (RV meldet Niederschlag, HymecNG aber nichts/Code 1) werden
-       NICHT blind als Regen gefuellt, sondern anhand des naechstgelegenen
-       bekannten HymecNG-Typs als Regen ODER Schnee eingestuft. Sonst kippt
-       die Statistik bei laenger lueckenhafter HymecNG-Abdeckung systematisch
-       Richtung Regen, weil RV selbst keine Niederschlagsart kennt.
-    """
     refined = class_merc.copy()
 
     if rate_merc is None:
-        # Ohne RV: Fallback auf jeweils niedrigste Intensitaet
         mask_rain = class_merc == 3
         mask_snow = class_merc == 7
+        mask_sleet = class_merc == 6
         if mask_rain.any():
-            refined[mask_rain] = RAIN_MMH_THRESHOLDS[0][2]  # Code 31
+            refined[mask_rain] = RAIN_MMH_THRESHOLDS[0][2]
         if mask_snow.any():
-            refined[mask_snow] = SNOW_MMH_THRESHOLDS[0][2]  # Code 71
-        if mask_rain.any() or mask_snow.any():
+            refined[mask_snow] = SNOW_MMH_THRESHOLDS[0][2]
+        if mask_sleet.any():
+            refined[mask_sleet] = SLEET_MMH_THRESHOLDS[0][2]   # Code 61
+        if mask_rain.any() or mask_snow.any() or mask_sleet.any():
             print("Warnung: RV nicht verfügbar, verwende niedrigste Intensitätsstufe als Fallback.", file=sys.stderr)
         return refined
 
@@ -546,44 +532,48 @@ def refine_with_hybrid_strategy(
     if mask_snow_below_min.any():
         refined[mask_snow_below_min] = SNOW_MMH_THRESHOLDS[0][2]  # Code 71
 
-    # === SCHRITT 3: Naechstgelegenen bekannten Niederschlagstyp bestimmen ===
-    # Wird gebraucht, um Luecken (Schritt 4+5) nicht pauschal als Regen zu
-    # fuellen. Basiert auf den unverfeinerten Basis-Codes von HymecNG.
+    # === SCHRITT 2c: Verfeinere SCHNEEREGEN (Code 6) mit RV-Intensität ===
+    mask_refine_sleet = (class_merc == 6) & has_rain
+    for lower, upper, new_code in SLEET_MMH_THRESHOLDS:
+        m = mask_refine_sleet & (rate_merc >= lower) & (rate_merc < upper)
+        refined[m] = new_code
+
+    mask_sleet_below_min = (class_merc == 6) & has_rain & (refined == 6)
+    if mask_sleet_below_min.any():
+        refined[mask_sleet_below_min] = SLEET_MMH_THRESHOLDS[0][2]  # Code 61
+
+        # === SCHRITT 3: Naechstgelegenen bekannten Niederschlagstyp bestimmen ===
     known_type = np.isin(class_merc, PRECIP_SOURCE_CODES)
     if known_type.any():
         _, (ir, ic) = ndimage.distance_transform_edt(~known_type, return_indices=True)
         nearest_type = class_merc[ir, ic]
     else:
-        # HymecNG liefert ueberhaupt keine Typ-Info -> ohne bessere Quelle
-        # bleibt nur die Annahme "Regen" als Fallback.
         nearest_type = np.full(class_merc.shape, 3, dtype=class_merc.dtype)
 
     is_snow_type = np.isin(nearest_type, tuple(SNOW_TYPE_CODES))
+    is_sleet_type = np.isin(nearest_type, tuple(SLEET_TYPE_CODES))
+    is_preserved_type = np.isin(nearest_type, tuple(FREEZING_RAIN_TYPE_CODES | {8} | HAIL_TYPE_CODES))
+    is_rain_type = ~is_snow_type & ~is_sleet_type & ~is_preserved_type
 
-    # === SCHRITT 4: Lücken füllen (RV hat Niederschlag, HymecNG nichts Konkretes) ===
-    unclassified_but_precip = has_rain & ~np.isin(class_merc, PRECIP_SOURCE_CODES)
-    fill_rain = unclassified_but_precip & ~is_snow_type
-    fill_snow = unclassified_but_precip & is_snow_type
+    # === SCHRITT 4: Luecken fuellen (RV hat Niederschlag, HymecNG nichts Konkretes) ===
+    # Deckt auch Code-1-Pixel ab, denn 1 ist nicht in PRECIP_SOURCE_CODES.
+    gap = has_rain & ~np.isin(class_merc, PRECIP_SOURCE_CODES)
+
     for lower, upper, new_code in RAIN_MMH_THRESHOLDS:
-        m = fill_rain & (rate_merc >= lower) & (rate_merc < upper)
+        m = gap & is_rain_type & (rate_merc >= lower) & (rate_merc < upper)
         refined[m] = new_code
     for lower, upper, new_code in SNOW_MMH_THRESHOLDS:
-        m = fill_snow & (rate_merc >= lower) & (rate_merc < upper)
+        m = gap & is_snow_type & (rate_merc >= lower) & (rate_merc < upper)
+        refined[m] = new_code
+    for lower, upper, new_code in SLEET_MMH_THRESHOLDS:
+        m = gap & is_sleet_type & (rate_merc >= lower) & (rate_merc < upper)
         refined[m] = new_code
 
-    # === SCHRITT 5: Code-1-Pixel (unklassifizierbar) mit RV-Info füllen ===
-    mask_unclass = class_merc == 1
-    fill_rain_unclass = mask_unclass & has_rain & ~is_snow_type
-    fill_snow_unclass = mask_unclass & has_rain & is_snow_type
-    for lower, upper, new_code in RAIN_MMH_THRESHOLDS:
-        m = fill_rain_unclass & (rate_merc >= lower) & (rate_merc < upper)
-        refined[m] = new_code
-    for lower, upper, new_code in SNOW_MMH_THRESHOLDS:
-        m = fill_snow_unclass & (rate_merc >= lower) & (rate_merc < upper)
-        refined[m] = new_code
+    # 4/5, 8, 9/10 haben keine Intensitaetsstufen -> Code des Nachbarn direkt uebernehmen
+    m = gap & is_preserved_type
+    refined[m] = nearest_type[m]
 
-    # Restliche Code-1-Pixel (wo RV nichts hat) bleiben für Nearest-Fill später
-
+    # Restliche Code-1-Pixel (wo RV nichts hat) bleiben fuer fill_unclassifiable()
     return refined
 
 
