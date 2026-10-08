@@ -35,10 +35,8 @@ PRECIP_COLORS: dict[int, str] = {
     33: "#008200",  # Regen stark
     4: "#FF4343",
     5: "#C80000",
-    6:  "#FFC189",  # Schneeregen ohne RV (Fallback), vorher #FFA500
     61: "#FFC189",  # Schneeregen leicht
     62: "#FF973A",  # Schneeregen mäßig/stark
-    7: "#47F0FF",
     71: "#47F0FF",
     72: "#478CFF",
     73: "#3568BD",
