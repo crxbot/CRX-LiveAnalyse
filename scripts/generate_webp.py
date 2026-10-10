@@ -63,7 +63,7 @@ SNOW_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
 ]
 
 SLEET_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
-    (0.1, 1.0, 61),            # leicht
+    (0.06, 1.0, 61),            # leicht
     (1.0, float("inf"), 62),   # mäßig/stark
 ]
 
@@ -84,7 +84,7 @@ SLEET_TYPE_CODES = {6, 61, 62}
 FREEZING_RAIN_TYPE_CODES = {4, 5}
 HAIL_TYPE_CODES = {9, 10}
 
-MIN_PRECIP_RATE_MMH = 0.1  # unter dieser Schwelle: kein Niederschlag erkannt
+MIN_PRECIP_RATE_MMH = 0.06  # unter dieser Schwelle: kein Niederschlag erkannt
 
 # Blitze
 THUNDER_COLOR = "#FD5FFF"
@@ -497,7 +497,7 @@ def refine_with_hybrid_strategy(
         mask_snow = class_merc == 7
         mask_sleet = class_merc == 6
         if mask_rain.any():
-            refined[mask_rain] = RAIN_MMH_THRESHOLDS[0][2]
+            refined[mask_rain] = 31
         if mask_snow.any():
             refined[mask_snow] = SNOW_MMH_THRESHOLDS[0][2]
         if mask_sleet.any():
