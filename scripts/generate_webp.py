@@ -30,6 +30,7 @@ RV_FILENAME_RE = re.compile(r"composite_rv_(\d{8})_(\d{4})_(\d{3})-hd5")
 # Code 3 bleibt als Fallback-Farbe erhalten fuer Pixel ohne RV-Abdeckung.
 # Codes 31/32/33 sind die RV-verfeinerten Regen-Intensitaeten.
 PRECIP_COLORS: dict[int, str] = {
+    30: "#43FF43",
     31: "#43FF43",  # Regen leicht
     32: "#34C134",  # Regen maessig
     33: "#008200",  # Regen stark
@@ -49,13 +50,14 @@ HAIL_CLASSES = {9, 10}
 # SCHWELLWERTE
 
 RAIN_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
+    (0.06, 0.09, 30),          #nieselregen
     (0.1, 1.25, 31),           # leicht
     (1.25, 10.0, 32),           # maessig
     (10.0, float("inf"), 33),  # stark
 ]
 
 SNOW_MMH_THRESHOLDS: list[tuple[float, float, int]] = [
-    (0.1, 1.0, 71),           # leicht
+    (0.06, 1.0, 71),           # leicht
     (1.0, 4.0, 72),            # maessig
     (4.0, float("inf"), 73),   # stark
 ]
