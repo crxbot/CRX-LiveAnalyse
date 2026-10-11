@@ -4,4 +4,4 @@ h5py>=3.16.0
 pyproj>=3.8.0
 Pillow>=12.3.0
 requests>=2.34.2
-tzdata>=2026.4
+tzdata>=2026.5
