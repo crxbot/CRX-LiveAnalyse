@@ -153,11 +153,12 @@ jobs:
             --meta-out ./metadata.json \
             --removed-out ./removed_files.txt
 
-      - name: Upload neue WEBP zu R2
+      - name: Upload neue Binaerdatei zu R2
         run: |
           aws s3 cp \
             "output/hymecng/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}" \
             "s3://${{ secrets.R2_BUCKET }}/${R2_PREFIX}/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}" \
+            --content-type application/octet-stream \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
