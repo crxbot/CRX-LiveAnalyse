@@ -10,7 +10,7 @@ concurrency:
 
 env:
   # so viele WEBPs sollen im R2-Bucket max. gleichzeitig liegen
-  MAX_KEEP: 48
+  MAX_KEEP: 12
   R2_PREFIX: liveanalyse
 
 jobs:
@@ -129,8 +129,8 @@ jobs:
           exit $STATUS
 
 
-      - name: Generate WEBP for LiveAnalyse
-        run: python scripts/generate_webp.py
+      - name: Generate Data for LiveAnalyse
+        run: python scripts/generate_data.py
 
       - name: Download bestehende metadata.json aus R2 (falls vorhanden)
         run: |
@@ -156,8 +156,8 @@ jobs:
       - name: Upload neue WEBP zu R2
         run: |
           aws s3 cp \
-            "output/hymecng/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}.webp" \
-            "s3://${{ secrets.R2_BUCKET }}/${R2_PREFIX}/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}.webp" \
+            "output/hymecng/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}" \
+            "s3://${{ secrets.R2_BUCKET }}/${R2_PREFIX}/liveanalyse_${BERLIN_DATE}_${BERLIN_TIME}" \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

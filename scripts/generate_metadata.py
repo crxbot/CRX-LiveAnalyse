@@ -5,22 +5,33 @@ import re
 import sys
 from datetime import datetime, timezone
 
-FILENAME_RE = re.compile(r"^(?P<var_type>.+)_(?P<date>\d{8})_(?P<time>\d{4})\.webp$")
+# Dateien haben keine Endung mehr, z.B. liveanalyse_20260924_1410
+FILENAME_RE = re.compile(r"^(?P<var_type>.+)_(?P<date>\d{8})_(?P<time>\d{4})$")
 
 # ------------------------------
-# Feste Geo-Referenzierung - aendert sich nie, daher hier hart hinterlegt
+# Festes natives DWD-Raster (HymecNG/RV) - aendert sich nie, daher hart hinterlegt
 # ------------------------------
-CRS = "EPSG:3857"
-EXTENT_3857 = [
-    160667.58918293554,
-    5726764.0017245915,
-    2087420.3952843477,
-    7606221.471264458,
-]
+GRID = {
+    "format": "raw-uint8",
+    "width": 1100,
+    "height": 1200,
+    "row_order": "north-to-south",
+    "projdef": (
+        "+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 "
+        "+x_0=543196.83521776402 +y_0=3622588.8619310022 +units=m "
+        "+a=6378137 +b=6356752.3142451802 +no_defs"
+    ),
+    "pixel_size_m": 1000.0,
+    "ll_x": -500.0,
+    "ll_y": -1199500.0,
+    "extent_native": [-500.0, -1199500.0, 1099500.0, 500.0],
+    "nodata": 255,
+}
+
 
 def scan_output_dir(output_dir: str):
     """Durchsucht output_dir (inkl. evtl. Unterordner je var_type) nach
-    WEBPs und gruppiert die Timesteps pro var_type."""
+    Rohdateien (ohne Endung) und gruppiert die Timesteps pro var_type."""
     var_types: dict[str, set[str]] = {}
 
     for root, _dirs, files in os.walk(output_dir):
@@ -61,7 +72,7 @@ def merge_timesteps(existing_meta: dict, new_var_types_raw: dict, max_keep: int 
     max_keep Eintraege gekuerzt (aelteste zuerst raus).
 
     Gibt (var_types_out, removed_files) zurueck, wobei removed_files die
-    Liste der dabei aussortierten WEBP-Dateinamen ist (fuers Loeschen in R2)."""
+    Liste der dabei aussortierten Dateinamen ist (fuers Loeschen in R2)."""
     existing_var_types = existing_meta.get("var_types", {})
 
     all_types = set(existing_var_types) | set(new_var_types_raw)
@@ -82,7 +93,7 @@ def merge_timesteps(existing_meta: dict, new_var_types_raw: dict, max_keep: int 
             kept = combined
 
         for ts in dropped:
-            removed_files.append(f"{var_type}_{ts}.webp")
+            removed_files.append(f"{var_type}_{ts}")
 
         var_types_out[var_type] = {
             "num_steps": len(kept),
@@ -102,7 +113,7 @@ def build_meta(
     var_types_raw = scan_output_dir(output_dir)
 
     if not var_types_raw:
-        print(f"Keine passenden WEBPs in {output_dir} gefunden.", file=sys.stderr)
+        print(f"Keine passenden Dateien in {output_dir} gefunden.", file=sys.stderr)
 
     var_types_out, removed_files = merge_timesteps(existing_meta, var_types_raw, max_keep)
 
@@ -119,16 +130,15 @@ def build_meta(
         "run": run or "",
         "date": date,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-        "crs": CRS,
-        "extent_3857": EXTENT_3857,
+        "grid": GRID,
         "var_types": var_types_out,
     }
     return meta, removed_files
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Baut metadata.json aus gerenderten WEBPs.")
-    parser.add_argument("output_dir", help="Verzeichnis mit den gerenderten WEBPs")
+    parser = argparse.ArgumentParser(description="Baut metadata.json aus gerenderten Rohdateien.")
+    parser.add_argument("output_dir", help="Verzeichnis mit den gerenderten Rohdateien (ohne Endung)")
     parser.add_argument("--run", default=None, help="Modelllauf, z.B. '18' (optional)")
     parser.add_argument("--date", default=None, help="Datum YYYYMMDD (optional, sonst automatisch)")
     parser.add_argument(
