@@ -488,7 +488,7 @@ def apply_lightning_overlay(
     hits = 0
     for lat, lon in strikes:
         row_f, col_f = lonlat_to_native_rowcol(lon, lat, grid, to_proj)
-        row = int(np.floor(row_f))
+        row = int(np.floor(row_f)) + 1
         col = int(np.floor(col_f))
         if not (0 <= col < w and 0 <= row < h):
             continue
